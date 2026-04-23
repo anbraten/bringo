@@ -1,0 +1,20 @@
+{
+  "name": "bringo",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "nuxt": "^4.4.2",
+    "uuid": "^11.1.0",
+    "vue": "^3.5.32",
+    "vue-router": "^5.0.4"
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0"
+  }
+}
