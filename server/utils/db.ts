@@ -37,4 +37,14 @@ export async function initDb() {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     )
   `)
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS list_categories (
+      id TEXT PRIMARY KEY,
+      list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      emoji TEXT NOT NULL DEFAULT '🏷️',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `)
 }

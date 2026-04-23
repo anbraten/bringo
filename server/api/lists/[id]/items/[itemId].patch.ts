@@ -1,7 +1,5 @@
 import { useDb } from '~~/server/utils/db'
 
-const VALID_CATEGORIES = ['snacks', 'drinks', 'activities', 'gear', 'other']
-
 export default defineEventHandler(async (event) => {
   const listId = getRouterParam(event, 'id')
   const itemId = getRouterParam(event, 'itemId')
@@ -25,7 +23,7 @@ export default defineEventHandler(async (event) => {
     fields.push('name = ?')
     args.push(name)
   }
-  if (body.category !== undefined && VALID_CATEGORIES.includes(body.category)) {
+  if (body.category !== undefined && body.category?.trim()) {
     fields.push('category = ?')
     args.push(body.category)
   }

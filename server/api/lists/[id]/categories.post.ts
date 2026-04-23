@@ -5,12 +5,11 @@ export default defineEventHandler(async (event) => {
   const listId = getRouterParam(event, 'id')
   const body = await readBody(event)
 
-  const name = body?.name?.trim()
-  const category = body?.category?.trim() || 'drinks'
-  const person = body?.person?.trim() || null
+  const label = body?.label?.trim()
+  const emoji = body?.emoji?.trim() || '🏷️'
 
-  if (!name) {
-    throw createError({ statusCode: 400, message: 'Item name is required' })
+  if (!label) {
+    throw createError({ statusCode: 400, message: 'Category label is required' })
   }
 
   const db = useDb()
@@ -25,9 +24,9 @@ export default defineEventHandler(async (event) => {
 
   const id = uuidv4()
   await db.execute({
-    sql: 'INSERT INTO items (id, list_id, name, category, person, packed) VALUES (?, ?, ?, ?, ?, 0)',
-    args: [id, listId!, name, category, person],
+    sql: 'INSERT INTO list_categories (id, list_id, label, emoji) VALUES (?, ?, ?, ?)',
+    args: [id, listId!, label, emoji],
   })
 
-  return { id, name, category, person, packed: false }
+  return { id, label, emoji }
 })

@@ -4,18 +4,34 @@ const listId = route.params.id as string
 
 const { name: myName, setName } = useLocalName()
 
-const CATEGORIES = [
-  { id: 'snacks',     label: 'Snacks',     emoji: '🍿' },
+const DEFAULT_CATEGORIES = [
   { id: 'drinks',     label: 'Drinks',     emoji: '🥤' },
+  { id: 'breakfast',  label: 'Breakfast',  emoji: '🥐' },
   { id: 'activities', label: 'Activities', emoji: '🎮' },
+  { id: 'dinner',     label: 'Dinner',     emoji: '🍽️' },
+  { id: 'snacks',     label: 'Snacks',     emoji: '🍿' },
   { id: 'gear',       label: 'Gear',       emoji: '🎒' },
-  { id: 'other',      label: 'Other',      emoji: '📦' },
 ]
 
 type Item = { id: string; name: string; category: string; person: string | null; packed: boolean }
-type ListData = { id: string; name: string; items: Item[] }
+type CustomCategory = { id: string; label: string; emoji: string }
+type ListData = { id: string; name: string; items: Item[]; categories: CustomCategory[] }
 
 const { data: list, refresh, error } = await useFetch<ListData>(`/api/lists/${listId}`)
+
+useHead(computed(() => ({ title: list.value ? `${list.value.name} · BringO` : 'BringO' })))
+
+const allCategories = computed(() => [
+  ...DEFAULT_CATEGORIES,
+  ...(list.value?.categories ?? []),
+])
+
+function catEmoji(id: string) {
+  return allCategories.value.find(c => c.id === id)?.emoji ?? '🏷️'
+}
+function catLabel(id: string) {
+  return allCategories.value.find(c => c.id === id)?.label ?? id
+}
 
 // Name editing in header
 const renamingMe = ref(false)
@@ -30,9 +46,87 @@ function saveRename() {
 }
 
 // Add item form
-const newItem = reactive({ name: '', category: 'other' })
+const newItem = reactive({ name: '', category: 'drinks' })
 const adding = ref(false)
 const showForm = ref(false)
+
+// Add category
+const showCatForm = ref(false)
+const newCatInput = ref('')
+const addingCat = ref(false)
+const catInputEl = ref<HTMLInputElement | null>(null)
+
+function openCatForm() {
+  showCatForm.value = true
+  nextTick(() => catInputEl.value?.focus())
+}
+
+function parseCatInput(raw: string): { label: string; emoji: string } {
+  const trimmed = raw.trim()
+  const m = trimmed.match(/^(\p{Emoji_Presentation}|\p{Extended_Pictographic})\s*/u)
+  if (m) return { emoji: m[0].trim(), label: trimmed.slice(m[0].length).trim() || trimmed.trim() }
+  return { emoji: '🏷️', label: trimmed }
+}
+
+async function addCategory() {
+  const raw = newCatInput.value.trim()
+  if (!raw) return
+  addingCat.value = true
+  try {
+    const { label, emoji } = parseCatInput(raw)
+    const created = await $fetch<CustomCategory>(`/api/lists/${listId}/categories`, {
+      method: 'POST',
+      body: { label, emoji },
+    })
+    newCatInput.value = ''
+    showCatForm.value = false
+    await refresh()
+    // Auto-select the new category in the add-item form
+    newItem.category = created.id
+  } finally {
+    addingCat.value = false
+  }
+}
+
+// Edit / delete custom category popover
+type CatPopover = { id: string; label: string; emoji: string; saving: boolean }
+const catPopover = ref<CatPopover | null>(null)
+
+function openCatPopover(cat: CustomCategory) {
+  catPopover.value = { ...cat, saving: false }
+}
+function closeCatPopover() {
+  catPopover.value = null
+}
+async function saveCatPopover() {
+  const p = catPopover.value
+  if (!p || !p.label.trim()) return
+  p.saving = true
+  try {
+    await $fetch(`/api/lists/${listId}/categories/${p.id}`, {
+      method: 'PATCH',
+      body: { label: p.label.trim(), emoji: p.emoji.trim() || '🏷️' },
+    })
+    closeCatPopover()
+    await refresh()
+  } finally {
+    if (catPopover.value) catPopover.value.saving = false
+  }
+}
+async function deleteCatPopover() {
+  const p = catPopover.value
+  if (!p) return
+  p.saving = true
+  try {
+    await $fetch(`/api/lists/${listId}/categories/${p.id}`, { method: 'DELETE' })
+    if (filterCategory.value === p.id) filterCategory.value = null
+    if (newItem.category === p.id) newItem.category = 'other'
+    closeCatPopover()
+    await refresh()
+  } finally {
+    if (catPopover.value) catPopover.value.saving = false
+  }
+}
 
 // Edit item
 type EditState = { name: string; category: string; saving: boolean }
@@ -97,7 +191,7 @@ const grouped = computed(() => {
     ? items.filter(i => i.category === filterCategory.value)
     : items
   const groups: Record<string, Item[]> = {}
-  for (const cat of CATEGORIES) {
+  for (const cat of allCategories.value) {
     const catItems = filtered.filter(i => i.category === cat.id)
     if (catItems.length > 0) groups[cat.id] = catItems
   }
@@ -142,13 +236,6 @@ async function deleteItem(item: Item) {
   await refresh()
 }
 
-function catEmoji(id: string) {
-  return CATEGORIES.find(c => c.id === id)?.emoji ?? '📦'
-}
-function catLabel(id: string) {
-  return CATEGORIES.find(c => c.id === id)?.label ?? 'Other'
-}
-
 const copyDone = ref(false)
 async function copyLink() {
   await navigator.clipboard.writeText(window.location.href)
@@ -159,7 +246,6 @@ async function copyLink() {
 
 <template>
   <main class="page">
-    <!-- Name onboarding gate -->
     <NameGate v-if="!myName" />
 
     <div v-if="error" class="not-found">
@@ -172,7 +258,6 @@ async function copyLink() {
         <div class="top-inner">
           <NuxtLink to="/" class="back">🧳 BringO</NuxtLink>
           <div class="header-right">
-            <!-- Rename inline -->
             <form v-if="renamingMe" class="rename-form" @submit.prevent="saveRename">
               <input
                 v-model="renameInput"
@@ -202,15 +287,78 @@ async function copyLink() {
           </p>
         </div>
 
-        <!-- Category filters -->
-        <div class="filters" v-if="totalCount > 0">
+        <!-- Category filters + add category -->
+        <div class="filters">
           <button class="filter-btn" :class="{ active: filterCategory === null }" @click="filterCategory = null">All</button>
+
+          <!-- Default categories (filter only) -->
           <button
-            v-for="cat in CATEGORIES" :key="cat.id"
+            v-for="cat in DEFAULT_CATEGORIES" :key="cat.id"
             class="filter-btn" :class="{ active: filterCategory === cat.id }"
             @click="filterCategory = filterCategory === cat.id ? null : cat.id"
           >{{ cat.emoji }} {{ cat.label }}</button>
+
+          <!-- Custom categories (filter + edit popover) -->
+          <div
+            v-for="cat in list.categories" :key="cat.id"
+            class="cat-pill-wrap"
+          >
+            <button
+              class="filter-btn custom-cat"
+              :class="{ active: filterCategory === cat.id }"
+              @click="filterCategory = filterCategory === cat.id ? null : cat.id"
+            >{{ cat.emoji }} {{ cat.label }}</button>
+            <button class="cat-edit-trigger" @click.stop="openCatPopover(cat)" title="Edit category">⋯</button>
+          </div>
+
+          <!-- Inline add category -->
+          <form v-if="showCatForm" class="cat-form" @submit.prevent="addCategory" @keydown.escape="showCatForm = false">
+            <input
+              ref="catInputEl"
+              v-model="newCatInput"
+              class="cat-input"
+              placeholder="🎸 Music"
+              maxlength="40"
+              :disabled="addingCat"
+              @blur="() => { if (!newCatInput.trim()) showCatForm = false }"
+            />
+          </form>
+          <button v-else class="filter-btn add-cat-btn" @click="openCatForm" title="Add category">+</button>
         </div>
+
+        <!-- Category edit popover -->
+        <Teleport to="body">
+          <div v-if="catPopover" class="popover-backdrop" @click.self="closeCatPopover">
+            <div class="popover" @keydown.escape="closeCatPopover">
+              <p class="popover-title">Edit category</p>
+              <div class="popover-row">
+                <input
+                  v-model="catPopover.emoji"
+                  class="popover-emoji"
+                  maxlength="4"
+                  autofocus
+                  placeholder="🏷️"
+                />
+                <input
+                  v-model="catPopover.label"
+                  class="popover-label"
+                  maxlength="40"
+                  placeholder="Category name"
+                  @keydown.enter.prevent="saveCatPopover"
+                />
+              </div>
+              <div class="popover-actions">
+                <button class="popover-delete" :disabled="catPopover.saving" @click="deleteCatPopover">Delete</button>
+                <div class="popover-right">
+                  <button class="cancel" @click="closeCatPopover">Cancel</button>
+                  <button class="popover-save" :disabled="catPopover.saving || !catPopover.label.trim()" @click="saveCatPopover">
+                    {{ catPopover.saving ? 'Saving…' : 'Save' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Teleport>
 
         <div v-if="totalCount === 0" class="empty">
           <p>No items yet. Add the first one!</p>
@@ -229,7 +377,7 @@ async function copyLink() {
                 <form class="edit-form" @submit.prevent="saveEdit(item)">
                   <input v-model="editing[item.id]!.name" class="edit-input" maxlength="80" required autofocus />
                   <select v-model="editing[item.id]!.category" class="edit-select">
-                    <option v-for="cat in CATEGORIES" :key="cat.id" :value="cat.id">
+                    <option v-for="cat in allCategories" :key="cat.id" :value="cat.id">
                       {{ cat.emoji }} {{ cat.label }}
                     </option>
                   </select>
@@ -247,23 +395,19 @@ async function copyLink() {
                 <button class="check" @click="togglePacked(item)" :title="item.packed ? 'Mark unpacked' : 'Mark packed'">
                   {{ item.packed ? '✅' : '⬜' }}
                 </button>
-
                 <div class="item-info">
                   <span class="item-name">{{ item.name }}</span>
-                  <!-- Claim area -->
                   <span v-if="isMine(item)" class="person-badge mine">
                     You
                     <button class="unclaim-btn" @click="unclaim(item)" title="Unclaim">✕</button>
                   </span>
                   <span v-else-if="item.person" class="person-badge other">{{ item.person }}</span>
                   <button
-                    v-else
-                    class="claim-btn"
+                    v-else class="claim-btn"
                     :disabled="claiming.has(item.id)"
                     @click="claim(item)"
                   >I'll bring it</button>
                 </div>
-
                 <button class="edit-btn" @click="startEdit(item)" title="Edit">✏️</button>
                 <button class="del" @click="deleteItem(item)" title="Remove">✕</button>
               </template>
@@ -277,7 +421,7 @@ async function copyLink() {
           <form v-else class="add-form" @submit.prevent="addItem">
             <input v-model="newItem.name" placeholder="What to bring?" autofocus maxlength="80" required />
             <select v-model="newItem.category">
-              <option v-for="cat in CATEGORIES" :key="cat.id" :value="cat.id">
+              <option v-for="cat in allCategories" :key="cat.id" :value="cat.id">
                 {{ cat.emoji }} {{ cat.label }}
               </option>
             </select>
@@ -318,8 +462,7 @@ async function copyLink() {
   background: #f5f3ef; border: 1.5px solid #e0e0e0;
   border-radius: 20px; padding: 0.35rem 0.8rem;
   font-size: 0.85rem; font-weight: 600; cursor: pointer;
-  display: flex; align-items: center; gap: 0.3rem;
-  transition: border-color 0.15s;
+  display: flex; align-items: center; gap: 0.3rem; transition: border-color 0.15s;
 }
 .me-badge:hover { border-color: #4f7efa; }
 .rename-hint { font-size: 0.75rem; opacity: 0.6; }
@@ -349,7 +492,7 @@ async function copyLink() {
 .bar { flex: 1; height: 6px; background: #e8e8e8; border-radius: 99px; overflow: hidden; }
 .fill { display: block; height: 100%; background: #4caf82; border-radius: 99px; transition: width 0.3s; }
 
-.filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.25rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.25rem; align-items: center; }
 .filter-btn {
   background: #fff; border: 1.5px solid #e0e0e0;
   border-radius: 20px; padding: 0.3rem 0.75rem;
@@ -357,6 +500,70 @@ async function copyLink() {
 }
 .filter-btn.active { background: #4f7efa; color: #fff; border-color: #4f7efa; }
 .filter-btn:not(.active):hover { border-color: #4f7efa; color: #4f7efa; }
+.add-cat-btn { border-style: dashed; color: #aaa; padding: 0.3rem 0.65rem; font-size: 1rem; }
+.add-cat-btn:hover { border-color: #4f7efa; color: #4f7efa; }
+
+.cat-pill-wrap { position: relative; display: flex; align-items: center; gap: 1px; }
+.cat-pill-wrap .custom-cat { border-radius: 20px 0 0 20px; border-right: none; }
+.cat-pill-wrap .custom-cat.active { border-right: none; }
+.cat-edit-trigger {
+  background: #fff; border: 1.5px solid #e0e0e0; border-left: none;
+  border-radius: 0 20px 20px 0; padding: 0.3rem 0.5rem;
+  font-size: 0.85rem; cursor: pointer; color: #aaa;
+  transition: all 0.15s; line-height: 1;
+}
+.cat-edit-trigger:hover { color: #4f7efa; border-color: #4f7efa; background: #f0f4ff; }
+.cat-pill-wrap:has(.active) .cat-edit-trigger { border-color: #4f7efa; background: #4f7efa; color: #fff; }
+.cat-pill-wrap:has(.active) .cat-edit-trigger:hover { background: #3a6af0; }
+
+.cat-form { display: flex; }
+.cat-input {
+  border: 1.5px solid #4f7efa; border-radius: 20px;
+  padding: 0.3rem 0.75rem; font-size: 0.82rem; outline: none;
+  width: 130px; transition: width 0.2s;
+}
+
+/* Category edit popover */
+.popover-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.popover {
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.15);
+  padding: 1.25rem; width: 100%; max-width: 320px;
+  display: flex; flex-direction: column; gap: 0.85rem;
+}
+.popover-title { font-weight: 700; font-size: 0.95rem; }
+.popover-row { display: flex; gap: 0.5rem; }
+.popover-emoji {
+  border: 1.5px solid #e0e0e0; border-radius: 8px;
+  padding: 0.5rem; font-size: 1.1rem; outline: none;
+  width: 52px; text-align: center; flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.popover-emoji:focus { border-color: #4f7efa; }
+.popover-label {
+  flex: 1; border: 1.5px solid #e0e0e0; border-radius: 8px;
+  padding: 0.5rem 0.75rem; font-size: 0.92rem; outline: none;
+  transition: border-color 0.15s;
+}
+.popover-label:focus { border-color: #4f7efa; }
+.popover-actions { display: flex; align-items: center; justify-content: space-between; }
+.popover-right { display: flex; gap: 0.4rem; }
+.popover-actions button {
+  border: none; border-radius: 8px; padding: 0.45rem 0.9rem;
+  font-size: 0.88rem; font-weight: 600; cursor: pointer;
+}
+.popover-delete { background: #fff0f0; color: #e53e3e; }
+.popover-delete:hover:not(:disabled) { background: #ffe0e0; }
+.popover-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+.popover-save { background: #4f7efa; color: #fff; }
+.popover-save:hover:not(:disabled) { background: #3a6af0; }
+.popover-save:disabled { background: #a0b4f8; cursor: not-allowed; }
+.popover .cancel { background: #f0f0f0; color: #555; }
+.popover .cancel:hover { background: #e0e0e0; }
 
 .empty { text-align: center; color: #aaa; padding: 2.5rem 0; }
 
@@ -389,8 +596,7 @@ ul { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
 
 .unclaim-btn {
   background: none; border: none; cursor: pointer;
-  color: #93c5fd; font-size: 0.7rem; padding: 0; line-height: 1;
-  transition: color 0.15s;
+  color: #93c5fd; font-size: 0.7rem; padding: 0; line-height: 1; transition: color 0.15s;
 }
 .unclaim-btn:hover { color: #1d4ed8; }
 
@@ -412,12 +618,10 @@ ul { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
 
 .del {
   background: none; border: none; cursor: pointer;
-  color: #ccc; font-size: 0.85rem; flex-shrink: 0; padding: 0.2rem;
-  transition: color 0.15s;
+  color: #ccc; font-size: 0.85rem; flex-shrink: 0; padding: 0.2rem; transition: color 0.15s;
 }
 .del:hover { color: #e53e3e; }
 
-/* Edit form inside item */
 .edit-form { flex: 1; display: flex; flex-direction: column; gap: 0.5rem; }
 .edit-input, .edit-select {
   border: 1.5px solid #e0e0e0; border-radius: 8px;
@@ -436,7 +640,6 @@ ul { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
 .edit-actions .cancel { background: #f0f0f0; color: #555; }
 .edit-actions .cancel:hover { background: #e0e0e0; }
 
-/* Add form */
 .add-section { margin-top: 1.5rem; }
 .add-toggle {
   background: #fff; border: 1.5px dashed #c0c0c0;

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+useHead({ title: 'BringO' })
+
 const listName = ref('')
 const error = ref('')
 const loading = ref(false)
